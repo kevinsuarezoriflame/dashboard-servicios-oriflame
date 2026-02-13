@@ -569,7 +569,7 @@
                 <th class="num">Filas items</th>
                 <th class="num">Total USD</th>
                 <th class="num">Saldo adeudado</th>
-                <th></th>
+                <th>Acción</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -1602,7 +1602,8 @@ function decodeURIComponentSafe(x){
       const summaries = [...fileSummaries.values()].sort((a,b)=> (a.month||"").localeCompare(b.month||"") || (a.file||"").localeCompare(b.file||""));
       const ok = summaries.filter(s=>s.status==="ok");
       const bad = summaries.filter(s=>s.status!=="ok");
-      const canDelete = (!cloud.enabled) || cloud.isAdmin;
+      const canDelete = true; // siempre mostrar botón
+      const canDeleteCloud = cloud.enabled && !!cloud.user && !!cloud.isAdmin;
 
       const months = new Set(ok.map(s=>s.month).filter(Boolean));
       el.badgeFilesLoaded.textContent = String(ok.length);
@@ -1627,7 +1628,7 @@ function decodeURIComponentSafe(x){
             <td class="num">${fmtNum(s.rows || 0)}</td>
             <td class="num">${fmtUSD(s.usd || 0)}</td>
             <td class="num">${isFinite(s.saldo) ? fmtUSD(s.saldo) : "—"}</td>
-            <td>${canDelete ? ('<button class="mini-btn" data-remove="'+escapeHtml(s.file)+'">Eliminar</button>') : "—"}</td>
+            <td>${'<button class="mini-btn" data-remove="'+escapeHtml(s.file)+'">Eliminar</button>'}</td>
           </tr>
         `;
       }).join("");
@@ -1638,12 +1639,37 @@ function decodeURIComponentSafe(x){
           if(!f) return;
 
           if(cloud.enabled){
-            if(!cloud.isAdmin){
-              toast("Acceso", "Solo admin puede eliminar cargas en la nube.");
+            const sum = fileSummaries.get(f);
+            const isLocalFail = !!sum && sum.status === "fail" && localFailures.has(f);
+
+            // Si es un registro fallido (local), permite quitarlo de la vista sin permisos
+            if(isLocalFail){
+              const ok = confirm("Esto quitará este registro FALLIDO de tu vista local (no afecta la nube). ¿Continuar?");
+              if(!ok) return;
+              localFailures.delete(f);
+              fileSummaries.delete(f);
+              allRecords = allRecords.filter(r => r.file !== f);
+              refreshAll();
               return;
             }
+
+            // Para borrar en nube necesitas login + rol admin
+            if(!cloud.user){
+              toast("Login", "Para eliminar en la nube primero haz clic en Ingresar. Luego vuelve a intentar.");
+              try{ el.btnLogin && el.btnLogin.focus(); }catch(_){}
+              return;
+            }
+            if(!cloud.isAdmin){
+              toast("Acceso", "Tu usuario está en modo visor. Para eliminar, agrega tu correo en ADMIN_EMAILS y en las reglas de Firestore.");
+              return;
+            }
+
+            const ok = confirm("¿Eliminar este archivo de la nube? Esto lo borrará para todos los usuarios.");
+            if(!ok) return;
+
             try{
               await deleteCloudUpload(f);
+              toast("Nube", "Archivo eliminado.");
               // La UI se refresca por onSnapshot automáticamente
             }catch(e){
               toast("Firebase", "No se pudo eliminar: " + (e?.message || e));
