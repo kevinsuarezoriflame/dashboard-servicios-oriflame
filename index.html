@@ -22,6 +22,7 @@
       --of-white:#ffffff;
       --shadow-soft: 0 6px 18px rgba(2,6,23,.06);
       --radius: 16px;
+      --topbar-h: 0px;
 
       --cat-orange:#f28b2c;
       --cat-orange-2:#ffb36a;
@@ -126,11 +127,25 @@
       box-shadow:none;
       font-weight:900;
     }
+    .btn.danger{
+      background:#fff;
+      color: var(--danger);
+      border:1px solid rgba(198,40,40,.35);
+      box-shadow:none;
+      font-weight:900;
+    }
+    .btn.danger:hover{ filter:brightness(.98); }
+
     .btn:active{ transform: translateY(1px); }
 
     .catbar-wrap{
+      position:sticky;
+      top: var(--topbar-h, 0px);
+      z-index:19;
       border-bottom: 1px solid var(--of-border);
-      background: linear-gradient(180deg, rgba(255,255,255,.9), rgba(255,255,255,.7));
+      background: linear-gradient(180deg, rgba(255,255,255,.96), rgba(255,255,255,.82));
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 22px rgba(2,6,23,.05);
     }
     .catbar{
       max-width: 1240px;
@@ -144,6 +159,34 @@
       margin-bottom: 10px;
       opacity: .95;
     }
+
+    .year-tabs{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items:center;
+      margin: 2px 0 10px;
+    }
+    .year-btn{
+      border: 1px solid rgba(11,61,46,.18);
+      background: rgba(255,255,255,.95);
+      color: var(--of-green-900);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-weight: 800;
+      font-size: 12px;
+      letter-spacing: .2px;
+      cursor: pointer;
+      box-shadow: var(--shadow-soft);
+      transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+    }
+    .year-btn:hover{ transform: translateY(-1px); box-shadow: 0 10px 22px rgba(2,6,23,.08); }
+    .year-btn.active{
+      background: linear-gradient(135deg, var(--of-green-700), var(--of-green-900));
+      color: #fff;
+      border-color: rgba(11,61,46,.45);
+    }
+
     .cat-tabs{
       display:flex;
       gap: 18px;
@@ -474,6 +517,7 @@
             <span class="badge mint" id="cloudStatus">Config pendiente</span>
             <button class="btn secondary" id="btnLogin" type="button" style="padding:10px 12px;">Ingresar</button>
             <button class="btn secondary" id="btnLogout" type="button" style="padding:10px 12px; display:none;">Salir</button>
+            <button class="btn danger" id="btnCloudPurge" type="button" style="padding:10px 12px; display:none;">Limpiar nube</button>
           </div>
         </div>
 
@@ -486,6 +530,7 @@
   <div class="catbar-wrap">
     <div class="catbar">
       <div class="catbar-topline"></div>
+      <div class="year-tabs" id="yearTabs"></div>
       <div class="cat-tabs" id="catTabs"></div>
     </div>
   </div>
@@ -509,7 +554,6 @@
             <span class="badge red" id="badgeFailed">0 fallidos</span>
           </div>
           <div style="display:flex; align-items:center; gap:10px;">
-            <button class="mini-btn" id="btnPurgeCloud" type="button" title="Borra todas las cargas guardadas en Firestore (solo si estás logueado)">Purgar nube</button>
             <span class="badge" id="badgeLastUpload">—</span>
             <span class="chev" aria-hidden="true"></span>
           </div>
@@ -1088,9 +1132,24 @@
       if(el.filePill) el.filePill.style.display = showUpload ? "" : "none";
       el.btnLogin.style.display = (cloud.enabled && !cloud.user) ? "" : "none";
       el.btnLogout.style.display = (cloud.enabled && !!cloud.user) ? "" : "none";
+      if(el.btnCloudPurge) el.btnCloudPurge.style.display = (cloud.enabled && cloud.isAdmin && !!cloud.user) ? "" : "none";
     }
 
-    function decodeURIComponentSafe(x){
+    
+    function canUseWebStorage(){
+      try{
+        const k="__of_test__"+String(Date.now());
+        localStorage.setItem(k,"1");
+        localStorage.removeItem(k);
+        return true;
+      }catch(e){
+        return false;
+      }
+    }
+    function isHttpProtocol(){
+      return location.protocol === "https:" || location.protocol === "http:";
+    }
+function decodeURIComponentSafe(x){
       try{ return decodeURIComponent(x); }catch(e){ return null; }
     }
 
@@ -1168,6 +1227,41 @@
       await cloud.db.collection(CLOUD_COLLECTION).doc(docId).delete();
     }
 
+    async function purgeCloudUploads(){
+      if(!cloud.enabled) return;
+      if(!cloud.user || !cloud.isAdmin){
+        toast("Acceso", "Solo admin puede limpiar la nube.");
+        return;
+      }
+      const ok = confirm("Esto borrará TODAS las cargas guardadas en la nube (Firestore). ¿Seguro?");
+      if(!ok) return;
+
+      setCloudStatus("Limpiando…", "gold");
+
+      try{
+        // Borrado por lotes (máx 500 por batch)
+        const col = cloud.db.collection(CLOUD_COLLECTION);
+        let totalDeleted = 0;
+
+        while(true){
+          const snap = await col.limit(500).get();
+          if(snap.empty) break;
+
+          const batch = cloud.db.batch();
+          snap.docs.forEach(doc => batch.delete(doc.ref));
+          await batch.commit();
+          totalDeleted += snap.size;
+        }
+
+        toast("Nube", "Listo. Se eliminaron " + totalDeleted + " cargas.");
+        setCloudStatus("Online", "mint");
+      }catch(e){
+        setCloudStatus("Offline", "gold");
+        toast("Firebase", "No se pudo limpiar la nube: " + (e?.message || e));
+      }
+    }
+
+
     function initCloud(){
       if(cloud.initialized) return;
       cloud.initialized = true;
@@ -1206,6 +1300,13 @@
         setAdminUI();
       });
 
+      // Si se usó redirect, captura resultado/errores
+      try{
+        cloud.auth.getRedirectResult().catch((e)=>{
+          if(e) toast("Login", e?.message || e);
+        });
+      }catch(e){ /* noop */ }
+
       // Realtime sync (lectura pública)
       cloud.db.collection(CLOUD_COLLECTION).onSnapshot((snap)=>{
         const docs = [];
@@ -1240,7 +1341,6 @@
       itemSelect: document.getElementById("itemSelect"),
       metricSelect: document.getElementById("metricSelect"),
       btnReset: document.getElementById("btnReset"),
-      btnPurgeCloud: document.getElementById("btnPurgeCloud"),
       btnExport: document.getElementById("btnExport"),
       emptyState: document.getElementById("emptyState"),
       dashboard: document.getElementById("dashboard"),
@@ -1274,6 +1374,7 @@
       badgeMonthsChip: document.getElementById("badgeMonthsChip"),
       badgeQCompare: document.getElementById("badgeQCompare"),
       tableBody: document.querySelector("#dataTable tbody"),
+      yearTabs: document.getElementById("yearTabs"),
       catTabs: document.getElementById("catTabs"),
       toast: document.getElementById("toast"),
       toastTitle: document.getElementById("toastTitle"),
@@ -1282,6 +1383,15 @@
     };
 
     let activeCategory = "__ALL__";
+    let activeYear = "__ALL__";
+
+    function syncStickyOffsets(){
+      const tb = document.querySelector(".topbar");
+      if(!tb) return;
+      const h = tb.getBoundingClientRect().height;
+      document.documentElement.style.setProperty("--topbar-h", `${Math.ceil(h)}px`);
+    }
+    window.addEventListener("resize", ()=>{ syncStickyOffsets(); });
 
     function toast(title, msg){
       el.toastTitle.textContent = title || "Aviso";
@@ -1301,9 +1411,57 @@
       el.uploadsPanel.style.display = "none";
     }
 
-    function renderCatTabs(){
-      const counts = new Map();
+    function yearsAvailable(){
+      const years = new Set();
       for(const r of allRecords){
+        const m = (r.month || "").toString().trim();
+        const y = m.slice(0,4);
+        if(/^\d{4}$/.test(y)) years.add(y);
+      }
+      return [...years].sort((a,b)=>a.localeCompare(b));
+    }
+
+    function recordsForYear(){
+      if(activeYear === "__ALL__") return allRecords;
+      return allRecords.filter(r=>{
+        const m = (r.month || "").toString();
+        return m.startsWith(activeYear + "-") || m === activeYear;
+      });
+    }
+
+    function renderYearTabs(){
+      if(!el.yearTabs) return;
+      if(allRecords.length === 0){
+        el.yearTabs.innerHTML = "";
+        return;
+      }
+
+      const years = yearsAvailable();
+      const valid = new Set(["__ALL__", ...years]);
+      if(!valid.has(activeYear)) activeYear = "__ALL__";
+
+      const btns = [{ key:"__ALL__", label:"General" }, ...years.map(y=>({ key:y, label:y }))];
+
+      el.yearTabs.innerHTML = btns.map(b=>{
+        const classes = ["year-btn"];
+        if(activeYear === b.key) classes.push("active");
+        return `<button class="${classes.join(" ")}" data-year="${b.key}" type="button">${b.label}</button>`;
+      }).join("");
+
+      el.yearTabs.querySelectorAll("button").forEach(btn=>{
+        btn.addEventListener("click", ()=>{
+          activeYear = btn.dataset.year;
+          el.itemSelect.value = "__ALL__";
+          refreshAll();
+        });
+      });
+    }
+
+    function renderCatTabs(){
+      const base = recordsForYear();
+
+      const counts = new Map();
+      for(const r of base){
         const k = normalizeText(r.category);
         counts.set(k, (counts.get(k) || 0) + 1);
       }
@@ -1312,8 +1470,8 @@
         const classes = ["cat-btn"];
         if(c.css) classes.push(c.css);
         if(activeCategory === c.key) classes.push("active");
-        const cnt = (c.key === "__ALL__") ? allRecords.length : (counts.get(c.key) || 0);
-        return `<button class="${classes.join(" ")}" data-cat="${c.key}">
+        const cnt = (c.key === "__ALL__") ? base.length : (counts.get(c.key) || 0);
+        return `<button class="${classes.join(" ")}" data-cat="${c.key}" type="button">
           ${c.label}<span class="cat-count">${cnt}</span>
         </button>`;
       }).join("");
@@ -1328,9 +1486,10 @@
     }
 
     function filteredRecords(){
+      const base = recordsForYear();
       const item = el.itemSelect.value;
       const cat = activeCategory;
-      return allRecords.filter(r => {
+      return base.filter(r => {
         const okCat = (cat === "__ALL__") ? true : normalizeText(r.category) === cat;
         const okItem = (item === "__ALL__") ? true : r.item === item;
         return okCat && okItem;
@@ -1479,16 +1638,15 @@
           if(!f) return;
 
           if(cloud.enabled){
-            if(!cloud.user){
-              toast("Acceso", "Inicia sesión (Ingresar) para eliminar cargas en la nube.");
+            if(!cloud.isAdmin){
+              toast("Acceso", "Solo admin puede eliminar cargas en la nube.");
               return;
             }
             try{
               await deleteCloudUpload(f);
               // La UI se refresca por onSnapshot automáticamente
-              toast("Listo", "Carga eliminada de la nube.");
             }catch(e){
-              toast("Firebase", "No se pudo eliminar. Revisa reglas de Firestore (write/delete) y que estés logueado. Detalle: " + (e?.message || e));
+              toast("Firebase", "No se pudo eliminar: " + (e?.message || e));
             }
             return;
           }
@@ -1498,6 +1656,7 @@
           fileSummaries.delete(f);
           if(allRecords.length === 0){
             activeCategory = "__ALL__";
+      activeYear = "__ALL__";
           }
           refreshAll();
         });
@@ -1911,14 +2070,18 @@
     function refreshAll(){
       if(allRecords.length === 0){
         showEmpty();
+        renderYearTabs();
         renderCatTabs();
+        requestAnimationFrame(syncStickyOffsets);
         return;
       }
       showDashboard();
+      renderYearTabs();
       renderCatTabs();
       refreshItemSelect();
       renderUploadsPanel();
       renderKPIsAndCharts();
+      requestAnimationFrame(syncStickyOffsets);
     }
 
     function readFileAsArrayBuffer(file){
@@ -2001,16 +2164,52 @@
         toast("Firebase", "Pega tu firebaseConfig en el HTML (FIREBASE_CONFIG).");
         return;
       }
+
+      // Validaciones rápidas para evitar el error (auth/operation-not-supported-in-this-environment)
+      if(!isHttpProtocol()){
+        toast("Login", "Abre este dashboard desde https:// (GitHub Pages) o http://localhost. No funciona si lo abres como archivo local (file://).");
+        return;
+      }
+      if(!canUseWebStorage()){
+        toast("Login", "Tu navegador está bloqueando el almacenamiento del sitio (cookies/almacenamiento). Permite cookies/almacenamiento para este dominio y vuelve a intentar.");
+        return;
+      }
+
+      const provider = new firebase.auth.GoogleAuthProvider();
+
       try{
-        const provider = new firebase.auth.GoogleAuthProvider();
         await cloud.auth.signInWithPopup(provider);
       }catch(e){
+        const code = e?.code || "";
+        const msg  = (e?.message || String(e||"")).toLowerCase();
+
+        if(code === "auth/operation-not-supported-in-this-environment" || msg.includes("operation-not-supported")){
+          // Fallback más robusto: redirect
+          try{
+            await cloud.auth.signInWithRedirect(provider);
+            toast("Login", "Redirigiendo a Google…");
+          }catch(e2){
+            toast("Login", e2?.message || e2);
+          }
+          return;
+        }
+        if(code === "auth/popup-blocked"){
+          toast("Login", "Tu navegador bloqueó el popup. Habilita popups para este sitio o vuelve a intentar.");
+          return;
+        }
+        if(code === "auth/unauthorized-domain"){
+          toast("Login", "Dominio no autorizado. En Firebase Console → Authentication → Settings → Authorized domains, agrega: " + location.hostname);
+          return;
+        }
         toast("Login", e?.message || e);
       }
     });
     el.btnLogout.addEventListener("click", async ()=>{
       if(!cloud.enabled) return;
       try{ await cloud.auth.signOut(); }catch(e){ toast("Logout", e?.message || e); }
+    });
+    if(el.btnCloudPurge) el.btnCloudPurge.addEventListener("click", async ()=>{
+      await purgeCloudUploads();
     });
 
     // Inicia sincronización online (si hay config pegada)
@@ -2022,6 +2221,7 @@
     el.btnReset.addEventListener("click", ()=>{
       // Reset de vista (no borra la nube)
       activeCategory = "__ALL__";
+      activeYear = "__ALL__";
       el.fileInput.value = "";
       el.itemSelect.value = "__ALL__";
       el.metricSelect.value = "usd";
@@ -2033,40 +2233,7 @@
 
       el.toast.style.display = "none";
       refreshAll();
-      renderCatTabs();
     });
-
-    // Purgar nube (borrar todas las cargas guardadas)
-    el.btnPurgeCloud?.addEventListener("click", async ()=>{
-      if(!cloud.enabled){
-        toast("Nube", "No estás en modo Online.");
-        return;
-      }
-      if(!cloud.user){
-        toast("Acceso", "Inicia sesión (Ingresar) para purgar la nube.");
-        return;
-      }
-      const ok = confirm("Esto BORRA TODAS las cargas guardadas en la nube (Firestore) para este dashboard.\n\n¿Deseas continuar?");
-      if(!ok) return;
-
-      try{
-        setProgress(0, 1);
-        const snap = await cloud.db.collection(CLOUD_COLLECTION).get();
-        let i=0; const total = snap.size || 0;
-        setProgress(0, Math.max(total,1));
-
-        for(const d of snap.docs){
-          i++;
-          try{ await d.ref.delete(); }catch(e){}
-          setProgress(i, Math.max(total,1));
-        }
-        toast("Listo", `Nube purgada: ${total} documento(s) eliminado(s).`);
-        // La UI se refresca por onSnapshot
-      }catch(e){
-        toast("Firebase", "No se pudo purgar la nube: " + (e?.message || e));
-      }
-    });
-
 
     el.btnExport.addEventListener("click", ()=>{
       if(allRecords.length === 0 && fileSummaries.size === 0){
@@ -2075,9 +2242,10 @@
       }
       exportExcel();
     });
-
+    renderYearTabs();
     renderCatTabs();
     showEmpty();
+    syncStickyOffsets();
   </script>
 </body>
 </html>
