@@ -1772,7 +1772,7 @@ function decodeURIComponentSafe(x){
         },
         options: {
           responsive: true,
-          layout: { padding: { top: 28, right: 10, left: 10, bottom: 0 } },
+          layout: { padding: { top: 56, right: 10, left: 10, bottom: 0 } },
           plugins: {
             legend: { display: false },
             datalabels: {
@@ -1797,6 +1797,7 @@ function decodeURIComponentSafe(x){
           },
           scales: {
             y: {
+              grace: "12%",
               ticks: { callback: (v) => (metric==="usd" || metric==="unit") ? fmtUSD(v) : fmtNum(v) },
               grid: { color: "rgba(2,6,23,.06)" }
             },
