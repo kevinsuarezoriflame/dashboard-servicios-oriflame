@@ -1485,16 +1485,13 @@ function decodeURIComponentSafe(x){
       });
     }
 
-    function filteredRecords(opts = {}){
+    function filteredRecords(){
       const base = recordsForYear();
       const item = el.itemSelect.value;
       const cat = activeCategory;
-      const ignoreItem = !!opts.ignoreItem;
-      const ignoreCat  = !!opts.ignoreCat;
-
       return base.filter(r => {
-        const okCat = ignoreCat ? true : ((cat === "__ALL__") ? true : normalizeText(r.category) === cat);
-        const okItem = ignoreItem ? true : ((item === "__ALL__") ? true : r.item === item);
+        const okCat = (cat === "__ALL__") ? true : normalizeText(r.category) === cat;
+        const okItem = (item === "__ALL__") ? true : r.item === item;
         return okCat && okItem;
       });
     }
@@ -1593,7 +1590,7 @@ function decodeURIComponentSafe(x){
     }
 
     function refreshItemSelect(){
-      const rec = filteredRecords({ ignoreItem: true });
+      const rec = filteredRecords();
       const items = [...new Set(rec.map(r=>r.item))].sort((a,b)=>a.localeCompare(b));
       const current = el.itemSelect.value;
       el.itemSelect.innerHTML = `<option value="__ALL__">Todos</option>` + items.map(i=>`<option value="${escapeHtml(i)}">${escapeHtml(i)}</option>`).join("");
@@ -1715,10 +1712,10 @@ function decodeURIComponentSafe(x){
       el.kpiQty.textContent = fmtNum(totalQty);
       el.kpiUnit.textContent = fmtUSD(unit);
 
-      const months = monthsSorted(filtered);
+      const months = monthsSorted(allRecords);
       el.badgePeriod.textContent = months.length ? `${months[0]} → ${months[months.length-1]}` : "—";
 
-      el.badgeItems.textContent = `${new Set(filtered.map(r=>r.item)).size} items`;
+      el.badgeItems.textContent = `${new Set(allRecords.map(r=>r.item)).size} items`;
       el.badgeMetric.textContent = el.metricSelect.value.toUpperCase();
       el.badgeFilter.textContent = (el.itemSelect.value === "__ALL__") ? "Todos" : el.itemSelect.value;
 
@@ -1731,22 +1728,12 @@ function decodeURIComponentSafe(x){
       el.kpiQtyHint.textContent = `—`;
       el.kpiUnitHint.textContent = `Ponderado`;
 
-      const fileSet = new Set(filtered.map(r => r.file));
-      const okAll = [...fileSummaries.values()].filter(s=>s.status==="ok");
-      const ok = [...fileSummaries.entries()]
-        .filter(([f,s]) => s.status==="ok" && fileSet.has(f))
-        .map(([_,s]) => s);
-
+      const ok = [...fileSummaries.values()].filter(s=>s.status==="ok");
       const saldoSum = ok.reduce((s,x)=> s + (isFinite(x.saldo) ? x.saldo : 0), 0);
       const monthsOk = [...new Set(ok.map(x=>x.month).filter(Boolean))].sort();
-
       el.kpiSaldo.textContent = fmtUSD(saldoSum);
-      el.kpiSaldoHint.textContent = `${ok.length} archivos (según filtro)`;
+      el.kpiSaldoHint.textContent = `${ok.length} archivos (global)`;
       el.badgeSaldoPeriod.textContent = monthsOk.length ? `${monthsOk[0]} → ${monthsOk[monthsOk.length-1]}` : "—";
-
-      const isGlobal = (activeYear==="__ALL__" && activeCategory==="__ALL__" && el.itemSelect.value==="__ALL__" && fileSet.size === okAll.length);
-      el.badgeSaldoScope.textContent = isGlobal ? "Global" : "Filtrado";
-
     }
 
     function datalabelFormatter(metric, v){
@@ -2077,10 +2064,10 @@ function decodeURIComponentSafe(x){
       el.kpiQty.textContent = fmtNum(totalQty);
       el.kpiUnit.textContent = fmtUSD(unit);
 
-      const months = monthsSorted(filtered);
+      const months = monthsSorted(allRecords);
       el.badgePeriod.textContent = months.length ? `${months[0]} → ${months[months.length-1]}` : "—";
 
-      el.badgeItems.textContent = `${new Set(filtered.map(r=>r.item)).size} items`;
+      el.badgeItems.textContent = `${new Set(allRecords.map(r=>r.item)).size} items`;
       el.badgeMetric.textContent = el.metricSelect.value.toUpperCase();
       el.badgeFilter.textContent = (el.itemSelect.value === "__ALL__") ? "Todos" : el.itemSelect.value;
 
@@ -2093,22 +2080,12 @@ function decodeURIComponentSafe(x){
       el.kpiQtyHint.textContent = `—`;
       el.kpiUnitHint.textContent = `Ponderado`;
 
-      const fileSet = new Set(filtered.map(r => r.file));
-      const okAll = [...fileSummaries.values()].filter(s=>s.status==="ok");
-      const ok = [...fileSummaries.entries()]
-        .filter(([f,s]) => s.status==="ok" && fileSet.has(f))
-        .map(([_,s]) => s);
-
+      const ok = [...fileSummaries.values()].filter(s=>s.status==="ok");
       const saldoSum = ok.reduce((s,x)=> s + (isFinite(x.saldo) ? x.saldo : 0), 0);
       const monthsOk = [...new Set(ok.map(x=>x.month).filter(Boolean))].sort();
-
       el.kpiSaldo.textContent = fmtUSD(saldoSum);
-      el.kpiSaldoHint.textContent = `${ok.length} archivos (según filtro)`;
+      el.kpiSaldoHint.textContent = `${ok.length} archivos (global)`;
       el.badgeSaldoPeriod.textContent = monthsOk.length ? `${monthsOk[0]} → ${monthsOk[monthsOk.length-1]}` : "—";
-
-      const isGlobal = (activeYear==="__ALL__" && activeCategory==="__ALL__" && el.itemSelect.value==="__ALL__" && fileSet.size === okAll.length);
-      el.badgeSaldoScope.textContent = isGlobal ? "Global" : "Filtrado";
-
 
       el.badgeMonthsChip.textContent = `${monthsOk.length} meses`;
 
